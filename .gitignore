@@ -5,6 +5,7 @@ __pycache__/
 *.geqdsk
 *.png
 *.pdf
+!refs/*.pdf
 .ipynb_checkpoints/
 *.egg-info/
 dist/
