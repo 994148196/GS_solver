@@ -611,34 +611,27 @@ class FixedBoundaryEquilibrium:
         else:
             self.psi_axis = float(self.plasma_psi.max())
 
-    # ── external-domain ψ via Laplace solve ──────────────────────────────
+    # ── external-domain ψ via Green integral + FDM interior ───────────────
 
     def psi_on_grid(self, Rmin, Rmax, Zmin, Zmax, nx, ny, order=2, method='lu'):
         """
-        Compute ψ on a larger vessel-scale grid via two-step approach.
+        Compute ψ on a larger vessel-scale grid.
 
-        Step 1 — Green's function volume integral on the outer boundary:
-            ψ_bc = ∫∫ G(R,Z; R',Z') · J_φ(R',Z') dR' dZ'
-            evaluated on the four edges of the large rectangular domain.
-            This gives physically correct boundary values from the actual
-            plasma current distribution.
+        Two-zone composite:
+          • D-shape interior: FDM converged solution (ψ=ψ_bndry on LCFS)
+          • D-shape exterior: Green's function volume integral
+            ψ(R,Z) = ∫∫ G(R,Z; R',Z')·J_φ(R',Z') dR' dZ'
 
-        Step 2 — FDM Laplace solve on the large grid:
-            • Inside D-shape: Dirichlet BC = converged FDM ψ (interpolated)
-            • Outside D-shape: solve Δ*ψ = 0 (Laplace)
-            • Outer boundary: Dirichlet BC = ψ from Green integral (Step 1)
-
-        This ensures:
-            — D-shape is a flux surface (ψ = ψ_bndry from FDM Dirichlet)
-            — Exterior satisfies Laplace (Δ*ψ = 0 in vacuum)
-            — Far-field boundary values are physically correct
+        The Green integral gives the exact free-space ψ satisfying
+        Δ*ψ = -μ₀ R Jφ in the plasma and Δ*ψ = 0 (Laplace) in vacuum,
+        naturally decaying to zero at infinity.  Guaranteed Z-symmetric
+        because the Green kernel is Z-symmetric.
 
         Parameters
         ----------
-        Rmin, Rmax, Zmin, Zmax : domain bounds [m] (larger than FDM grid)
+        Rmin, Rmax, Zmin, Zmax : domain bounds [m]
         nx, ny : grid size for the large domain
-        order  : FDM order (2 or 4)
-        method : 'lu' or 'auto'
+        order, method : unused (for API compatibility)
 
         Returns
         -------
@@ -648,63 +641,24 @@ class FixedBoundaryEquilibrium:
         Z1d = np.linspace(Zmin, Zmax, ny)
         R2d, Z2d = np.meshgrid(R1d, Z1d, indexing='ij')
 
-        # ── Interpolate FDM solution onto the large grid ──────────────────
+        mask_dshape = mask_inside_lcfs(R2d, Z2d, self.R_lcfs, self.Z_lcfs)
+
+        # ── D-shape interior: interpolated FDM solution ───────────────────
+        psi = np.zeros_like(R2d, dtype=float)
         f_fdm = RectBivariateSpline(
             self.R[:, 0], self.Z[0, :], self.plasma_psi)
-        psi_large = f_fdm(R1d, Z1d)
+        psi[mask_dshape] = f_fdm(R1d, Z1d)[mask_dshape]
 
-        # ── Step 1: Green function volume integral for outer BC ───────────
-        # Compute ψ on the four edges of the large rectangle
-        R_edge_bot = np.linspace(Rmin, Rmax, nx)
-        Z_edge_bot = np.full(nx, Zmin)
-        R_edge_top = np.linspace(Rmin, Rmax, nx)
-        Z_edge_top = np.full(nx, Zmax)
-        R_edge_left  = np.full(ny - 2, Rmin)
-        Z_edge_left  = np.linspace(Zmin, Zmax, ny)[1:-1]
-        R_edge_right = np.full(ny - 2, Rmax)
-        Z_edge_right = np.linspace(Zmin, Zmax, ny)[1:-1]
-
-        R_obs = np.concatenate([R_edge_bot, R_edge_top,
-                                R_edge_left, R_edge_right])
-        Z_obs = np.concatenate([Z_edge_bot, Z_edge_top,
-                                Z_edge_left, Z_edge_right])
-
-        from .boundary import greens_volume_psi as _gvpsi
+        # ── D-shape exterior: Green volume integral ───────────────────────
+        ext_mask = ~mask_dshape
+        R_obs = R2d[ext_mask]; Z_obs = Z2d[ext_mask]
         idx_i, idx_j = np.where(self.plasma_mask)
-        psi_edge = _gvpsi(
+        psi[ext_mask] = greens_volume_psi(
             R_obs, Z_obs,
             self.R[idx_i, idx_j], self.Z[idx_i, idx_j],
             self._Jtor[idx_i, idx_j],
             self.dR, self.dZ)
 
-        # ── Build mask: True = solve interior (Laplace), False = Dirichlet ──
-        mask_dshape = mask_inside_lcfs(R2d, Z2d, self.R_lcfs, self.Z_lcfs)
-        interior_mask = (~mask_dshape)  # exterior of D-shape = Laplace region
-        interior_mask[0, :]  = False   # boundary: Dirichlet
-        interior_mask[-1, :] = False
-        interior_mask[:, 0]  = False
-        interior_mask[:, -1] = False
-
-        # ── Build RHS ────────────────────────────────────────────────────
-        rhs = np.zeros_like(R2d, dtype=float)
-
-        # Outer boundary → Green integral values
-        rhs[0, :]   = psi_edge[:nx]                              # bottom
-        rhs[-1, :]  = psi_edge[nx:2*nx]                          # top
-        rhs[1:-1, 0]  = psi_edge[2*nx:2*nx + (ny - 2)]           # left
-        rhs[1:-1, -1] = psi_edge[2*nx + (ny - 2):]               # right
-
-        # D-shape interior → FDM converged solution (Dirichlet)
-        rhs[mask_dshape] = psi_large[mask_dshape]
-
-        # Laplace region: rhs = 0 (already), source term = 0
-
-        # ── Build masked solver and solve ─────────────────────────────────
-        solver = make_masked_solver(
-            Rmin, Rmax, Zmin, Zmax, nx, ny, interior_mask,
-            order=order, method=method)
-
-        psi = to_numpy(solver(to_backend(rhs)))
         return R2d, Z2d, psi
 
     # ── diagnostics ───────────────────────────────────────────────────────

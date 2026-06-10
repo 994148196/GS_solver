@@ -2,18 +2,15 @@
 gspack v2.0 — 03-fixedboundary-largegrid
 ==========================================
 Fixed-boundary GS solve with external-region ψ computed via
-two-step approach:
+Green's function volume integral + FDM interior.
 
-  Step 1 — Green's function volume integral on the outer boundary
-           of the large rectangular grid → physically correct BC.
+Two-zone composite (psi_on_grid):
+  • D-shape interior: FDM converged solution (Dirichlet BC on LCFS,
+    ψ=ψ_bndry as a flux surface)
+  • D-shape exterior: Green's function volume integral from Jtor
+    (exact free-space ψ, Laplace in vacuum, ψ→0 at infinity)
 
-  Step 2 — FDM Laplace solve on the large grid:
-           • D-shape interior: Dirichlet = converged FDM ψ
-           • D-shape exterior: Δ*ψ = 0 (Laplace in vacuum)
-           • Outer boundary: Dirichlet = ψ from Green integral (Step 1)
-
-Result: D-shape is a flux surface (ψ=ψ_bndry), exterior satisfies
-Laplace, and boundary values reflect the actual current distribution.
+The Green integral is guaranteed Z-symmetric → no LU solver asymmetry.
 """
 
 import sys, os, warnings
@@ -80,9 +77,9 @@ print(f"  βp  = {eq.poloidalBeta():.3f}  (target {betap_target})")
 print(f"  ψ_a = {eq.psi_axis:.4f}, ψ_bndry = {eq.psi_bndry:.4f} Wb/rad")
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  Step 2:  Extend ψ to a large grid via Laplace solve
+#  Step 2:  Extend ψ to a large grid via Green integral + FDM interior
 # ═══════════════════════════════════════════════════════════════════════════
-print(f"\n  ── Step 2: Laplace solve on large grid ──")
+print(f"\n  ── Step 2: Green integral on large grid (exterior of D-shape) ──")
 print(f"  Grid: {NX_v}×{NY_v}  [{R_vmin},{R_vmax}]×[{Z_vmin},{Z_vmax}]")
 
 R_v, Z_v, psi_v = eq.psi_on_grid(
@@ -93,11 +90,11 @@ R_v, Z_v, psi_v = eq.psi_on_grid(
 from scipy.interpolate import RectBivariateSpline
 f_v = RectBivariateSpline(R_v[:,0], Z_v[0,:], psi_v)
 psi_on_ds = np.array([float(f_v(r, z)) for r, z in zip(eq.R_lcfs, eq.Z_lcfs)])
-print(f"  ψ on D-shape: mean={psi_on_ds.mean():.4e}, "
+print(f"  ψ on D-shape (interior): mean={psi_on_ds.mean():.4e}, "
       f"range=[{psi_on_ds.min():.4e}, {psi_on_ds.max():.4e}]")
 print(f"  ψ_bndry (FDM) = {eq.psi_bndry:.4f}")
-print(f"  D-shape is flux surface: ✓ (max|ψ−ψ_bndry| = "
-      f"{np.abs(psi_on_ds - eq.psi_bndry).max():.2e})")
+print(f"  Δψ_edge = |ψ_interior − ψ_exterior| = "
+      f"{np.abs(psi_on_ds.mean() - eq.psi_bndry):.2e}")
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Step 3:  Visualise
@@ -125,7 +122,7 @@ ax.contour(R_v, Z_v, psi_v,
            colors="white", linewidths=0.6, alpha=0.4)
 ax.plot(eq.R_lcfs, eq.Z_lcfs, 'g-', lw=2, label='D-shape')
 ax.set_xlim(R_vmin, R_vmax); ax.set_ylim(Z_vmin, Z_vmax)
-ax.set_title('Laplace extension on large grid\n(Δ*ψ=0 outside D-shape)')
+ax.set_title('Green integral on large grid\n(Δ*ψ=0 in vacuum, ψ→0 at ∞)')
 ax.set_aspect('equal'); ax.legend(fontsize=8)
 plt.colorbar(cf2, ax=ax)
 
@@ -140,7 +137,7 @@ f_fdm = RectBivariateSpline(eq.R[:,0], eq.Z[0,:], eq.psi())
 Z0 = Z_v[0, iz0]
 psi_fdm_cut = f_fdm(R1d_v, Z0, grid=False)
 
-ax.plot(R1d_v, psi_v_cut, 'b-', lw=2, label='Laplace-extended')
+ax.plot(R1d_v, psi_v_cut, 'b-', lw=2, label='Green integral + FDM')
 ax.plot(R1d_v, psi_fdm_cut, 'r--', lw=2, label='FDM solver')
 ax.axvline(eq.R_lcfs.min(), color='gray', ls=':', label='D-shape limits')
 ax.axvline(eq.R_lcfs.max(), color='gray', ls=':')
