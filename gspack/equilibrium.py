@@ -276,7 +276,14 @@ class Equilibrium:
 
     def _masks(self):
         pN = self.psiN()
-        return np.where((pN>=0)&(pN<=1),1.0,0.0), pN
+        mask = np.where((pN>=0)&(pN<=1), 1.0, 0.0)
+        if self._opoints and self._xpoints:
+            try:
+                mask = core_mask(self.R, self.Z, self.psi(),
+                                 self._opoints, self._xpoints, self.psi_bndry)
+            except Exception:
+                pass  # fallback to psiN-based mask
+        return mask, pN
 
     def poloidalBeta(self):
         if self._profiles is None: return 0.0

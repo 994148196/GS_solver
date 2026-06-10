@@ -168,3 +168,34 @@ class constrain_snowflake(constrain):
         nc = A.shape[1]
         dI = inv(A.T @ A + self.gamma**2 * np.eye(nc)) @ (A.T @ b)
         tokamak.controlAdjust(dI)
+
+
+class constrain_axis:
+    """
+    Constrain plasma magnetic axis position by requiring Br=0, Bz=0 at (R0, Z0).
+
+    Uses Tikhonov-regularised least-squares to distribute coil current changes.
+    Works together with ConstrainPaxisIp / ConstrainBetapIp which handle the
+    Ip / βp constraint — together they provide full free-boundary control
+    without needing X-point or isoflux specifications.
+
+    Parameters
+    ----------
+    R0, Z0 : float — target magnetic axis position [m] (default: 1.0, 0.0)
+    gamma  : float — Tikhonov regularisation (default: 1e-8)
+    """
+    def __init__(self, R0=1.0, Z0=0.0, gamma=1e-8):
+        self.R0, self.Z0, self.gamma = R0, Z0, gamma
+
+    def __call__(self, eq):
+        tokamak = eq.tokamak
+        A, b = [], []
+        b.append(-float(eq.Br(self.R0, self.Z0)))
+        A.append(tokamak.controlBr(self.R0, self.Z0))
+        b.append(-float(eq.Bz(self.R0, self.Z0)))
+        A.append(tokamak.controlBz(self.R0, self.Z0))
+        A = np.array(A, dtype=float)
+        b = np.array(b, dtype=float)
+        nc = A.shape[1]
+        dI = inv(A.T @ A + self.gamma**2 * np.eye(nc)) @ (A.T @ b)
+        tokamak.controlAdjust(dI)
