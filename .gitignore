@@ -4,6 +4,7 @@ __pycache__/
 *.h5
 *.geqdsk
 *.png
+*.pdf
 .ipynb_checkpoints/
 *.egg-info/
 dist/

@@ -44,13 +44,19 @@ class _ProfileBase:
         return self._fvac
 
     def pressure(self, psiN):
-        """p(ψN) by integrating p'."""
+        """p(ψN) by integrating p'.
+
+        Since p'(ψ) = pprime(psiN) and ψ = ψ_axis + psiN · (ψ_bndry − ψ_axis),
+        the integral from boundary (siN=1) gives:
+            p(psiN) = −dpsi · ∫_{psiN}^{1} pprime(x) dx
+        with dpsi = ψ_bndry − ψ_axis < 0, so p > 0 for physical profiles.
+        """
         psiN = np.asarray(psiN, dtype=float)
         scalar = psiN.ndim == 0
         psiN = np.atleast_1d(psiN)
         dpsi = self.psi_bndry - self.psi_axis
         result = np.array([
-            quad(self.pprime, float(p), 1.0)[0] * dpsi
+            quad(self.pprime, float(p), 1.0)[0] * (-dpsi)
             for p in psiN.ravel()
         ]).reshape(psiN.shape)
         return float(result[0]) if scalar else result
@@ -63,7 +69,7 @@ class _ProfileBase:
         dpsi = self.psi_bndry - self.psi_axis
         f2vac = self.fvac()**2
         result = np.array([
-            np.sqrt(max(2.0 * quad(self.ffprime, float(p), 1.0)[0] * dpsi + f2vac, 0.0))
+            np.sqrt(max(2.0 * quad(self.ffprime, float(p), 1.0)[0] * (-dpsi) + f2vac, 0.0))
             for p in psiN.ravel()
         ]).reshape(psiN.shape)
         return float(result[0]) if scalar else result
@@ -181,7 +187,7 @@ class ConstrainBetapIp(_ProfileBase):
         # Pressure shape integral (normalised)
         def pshape_fn(pn):
             v, _ = quad(lambda x: (1 - x**self.alpha_m)**self.alpha_n, pn, 1.0)
-            return v * dpsi
+            return v * (-dpsi)
 
         nx, ny = psiN.shape
         pfunc = np.zeros((nx, ny))
@@ -203,7 +209,7 @@ class ConstrainBetapIp(_ProfileBase):
             Bz_2d =  f_psi(R[:,0], Z[0,:], dx=1) / R
         B2_int = romb(romb((Br_2d**2 + Bz_2d**2) * mask * R)) * dR * dZ
 
-        LBeta0 = -self.betap * self.Raxis * B2_int / (2.0 * MU0 * romb(romb(pfunc*R))*dR*dZ + 1e-30)
+        LBeta0 = self.betap * self.Raxis * B2_int / (2.0 * MU0 * romb(romb(pfunc*R))*dR*dZ + 1e-30)
 
         IR  = romb(romb(jtorshape * R / self.Raxis)) * dR * dZ
         I_R = romb(romb(jtorshape * self.Raxis / R)) * dR * dZ

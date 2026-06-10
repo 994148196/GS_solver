@@ -225,3 +225,53 @@ def make_solver(Rmin, Rmax, Zmin, Zmax, nx, ny, order=2, method='auto'):
     solve._method = 'amg' if _amg else 'lu'
     solve._nx, solve._ny = nx, ny
     return solve
+
+
+def make_masked_solver(Rmin, Rmax, Zmin, Zmax, nx, ny, interior_mask,
+                       order=2, method='auto'):
+    """
+    Build a GS solver with an arbitrary interior/boundary mask.
+
+    Parameters
+    ----------
+    Rmin, Rmax, Zmin, Zmax : domain bounds [m]
+    nx, ny : grid dimensions
+    interior_mask : (nx, ny) bool array
+        True → point uses GS FDM stencil
+        False → point is Dirichlet BC (identity row)
+    order : 2 or 4
+    method : 'auto' | 'lu' | 'amg'
+
+    Returns
+    -------
+    solve : callable  solve(rhs_2d) → psi_2d
+        For Dirichlet points, rhs_2d IS the boundary value.
+        For interior points, rhs_2d is the GS source term (-μ₀RJtor).
+    """
+    if order == 4:
+        A = gs_sparse_4th(Rmin, Rmax, Zmin, Zmax, nx, ny)
+    else:
+        A = gs_sparse_2nd(Rmin, Rmax, Zmin, Zmax, nx, ny)
+
+    # Modify: set identity rows for boundary (non-interior) points
+    A = A.tolil()
+    for i in range(nx):
+        for j in range(ny):
+            if not interior_mask[i, j]:
+                row = i * ny + j
+                A.data[row] = []
+                A.rows[row] = []
+                A[row, row] = 1.0
+    A = A.tocsc()
+
+    from scipy.sparse.linalg import factorized
+    _lu = factorized(A)
+
+    def solve(rhs_2d):
+        rhs_np = to_numpy(rhs_2d).ravel()
+        return to_backend(_lu(rhs_np).reshape(nx, ny))
+
+    solve._order = order
+    solve._method = 'lu'
+    solve._nx, solve._ny = nx, ny
+    return solve
