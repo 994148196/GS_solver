@@ -134,20 +134,6 @@ psi2d = eq.psi()
 sep   = eq.separatrix(npoints=360)
 mag   = eq.magneticAxis()
 
-# External ψ via Green volume integral (free-space, physical decay)
-from gspack.boundary import greens_volume_psi
-idx_i, idx_j = np.where(eq.plasma_mask)
-R_src, Z_src = eq.R[idx_i, idx_j], eq.Z[idx_i, idx_j]
-J_src = eq._Jtor[idx_i, idx_j]
-
-R_ext = np.linspace(eq.Rmin - 0.3, eq.Rmax + 0.3, 97)
-Z_ext = np.linspace(eq.Zmin - 0.3, eq.Zmax + 0.3, 97)
-R_ext2d, Z_ext2d = np.meshgrid(R_ext, Z_ext, indexing='ij')
-psi_ext = greens_volume_psi(
-    R_ext2d.ravel(), Z_ext2d.ravel(),
-    R_src, Z_src, J_src,
-    eq.dR, eq.dZ).reshape(R_ext2d.shape)
-
 fig, axes = plt.subplots(1, 3, figsize=(15, 6))
 fig.suptitle(
     f"gspack v2.0 — Fixed-boundary  "
@@ -155,24 +141,21 @@ fig.suptitle(
     f"Ip={Ip_target:.0e}  βp={betap_target}",
     fontsize=12)
 
-# Panel 1: ψ on large grid — FDM inside + Green outside
+# Flux surfaces
 ax = axes[0]
-cf = ax.contourf(R_ext2d, Z_ext2d, psi_ext, levels=30, cmap="RdYlBu_r")
-# Internal contours (FDM, strict ψ=ψ_bndry on D-shape)
-cs_in = ax.contour(eq.R, eq.Z, psi2d,
-                    levels=np.linspace(eq.psi_bndry, eq.psi_axis, 12),
-                    colors="white", linewidths=1.2)
-ax.clabel(cs_in, inline=1, fontsize=7, fmt='%.3f')
-# External contours (Green integral, free-space)
-lev_ext = np.linspace(psi_ext.min() + 1e-6, eq.psi_bndry, 12)
-cs_out = ax.contour(R_ext2d, Z_ext2d, psi_ext,
-                     levels=lev_ext,
-                     colors='cyan', linewidths=0.8, linestyles='--', alpha=0.7)
-ax.clabel(cs_out, inline=1, fontsize=7, fmt='%.3f', colors='cyan')
-ax.plot(sep[:, 0], sep[:, 1], "lime", lw=2, label="D-shape LCFS")
+cf = ax.contourf(eq.R, eq.Z, psi2d, levels=30, cmap="RdYlBu_r")
+ax.contour(eq.R, eq.Z, psi2d,
+           levels=np.linspace(eq.psi_bndry, eq.psi_axis, 14),
+           colors="white", linewidths=0.6)
+ax.contour(eq.R, eq.Z, psi2d, levels=[eq.psi_bndry],
+           colors=["lime"], linewidths=2.0)
+ax.plot(sep[:, 0], sep[:, 1], "g-", lw=1.5, label="LCFS (prescribed)")
 ax.plot(mag[0], mag[1], "k+", ms=12, mew=2, label="O-point")
+if eq._xpoints:
+    for xp in eq._xpoints[:2]:
+        ax.plot(xp[0], xp[1], "rx", ms=10, mew=2)
 ax.set_xlabel("R [m]"); ax.set_ylabel("Z [m]")
-ax.set_title("ψ — FDM interior (white) + Green exterior (cyan)")
+ax.set_title("ψ(R,Z)")
 ax.set_aspect("equal"); ax.legend(fontsize=8)
 plt.colorbar(cf, ax=ax)
 

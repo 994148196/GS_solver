@@ -62,8 +62,8 @@ def _green_matrix_np(R_obs, Z_obs, R_src, Z_src):
     from scipy.special import ellipk, ellipe
     k2 = 4.0 * R_o * R_s / ((R_o + R_s)**2 + (Z_o - Z_s)**2)
     k2 = np.clip(k2, 1e-10, 1.0 - 1e-10)
-    k  = np.sqrt(np.maximum(k2, 0.0))
-    return (MU0 / (2.0 * np.pi)) * np.sqrt(np.maximum(R_o * R_s, 0.0)) \
+    k  = np.sqrt(k2)
+    return (MU0 / (2.0 * np.pi)) * np.sqrt(R_o * R_s) \
            * ((2.0 - k2) * ellipk(k2) - 2.0 * ellipe(k2)) / k
 
 

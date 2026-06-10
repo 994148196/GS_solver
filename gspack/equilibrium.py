@@ -611,50 +611,43 @@ class FixedBoundaryEquilibrium:
         else:
             self.psi_axis = float(self.plasma_psi.max())
 
-    # ── external-domain ψ via Green integral ──────────────────────────────
+    # ── external-domain psi via Green's function volume integral ───────────
 
-    def psi_on_grid(self, Rmin, Rmax, Zmin, Zmax, nx, ny, order=2, method='lu'):
+    def psi_on_grid(self, R_grid, Z_grid):
         """
-        Compute ψ on a larger vessel-scale grid via Green's function
-        volume integral.
+        Compute ψ on an arbitrary grid via Green's function volume integral.
 
         ψ(R,Z) = ∫∫ G(R,Z; R',Z') · J_φ(R',Z') dR' dZ'
 
-        This is the exact free-space poloidal flux from the converged
-        plasma current distribution.  It satisfies:
-          • Δ*ψ = -μ₀ R Jφ   inside the plasma
-          • Δ*ψ = 0           in vacuum
-          • ψ → 0             at infinity
+        This gives the free-space poloidal flux from the converged plasma
+        current.  It satisfies Δ*ψ = -μ₀ R J_φ inside the plasma and
+        Laplace (Δ*ψ = 0) in the vacuum exterior, with natural BC (ψ → 0
+        at infinity).
 
-        The Green integral gives a single, continuous ψ field everywhere.
-        Mixed with FDM interior interpolation → avoid discontinuity at
-        the D-shape boundary.  On the D-shape, ψ varies (not constant)
-        because the Green kernel does not enforce a Dirichlet BC — the
-        constant-ψ LCFS is only exactly enforced in the FDM solve used
-        for internal diagnostics.
+        After self-consistent convergence of the fixed-boundary solve, the
+        value of ψ on the D-shape contour will be ≈ ψ_bndry (the LCFS
+        flux-surface value).  This method is recommended for computing
+        ψ and B_pol in the external vacuum region.
 
         Parameters
         ----------
-        Rmin, Rmax, Zmin, Zmax : domain bounds [m]
-        nx, ny : grid size for the large domain
-        order, method : unused (API compatibility)
+        R_grid, Z_grid : 2-D arrays — observation grid (e.g. from np.meshgrid)
 
         Returns
         -------
-        R2d, Z2d, psi : 2-D arrays — the coordinate mesh and ψ field
+        psi : 2-D array, same shape as R_grid — poloidal flux [Wb/rad]
         """
-        R1d = np.linspace(Rmin, Rmax, nx)
-        Z1d = np.linspace(Zmin, Zmax, ny)
-        R2d, Z2d = np.meshgrid(R1d, Z1d, indexing='ij')
-
         idx_i, idx_j = np.where(self.plasma_mask)
+        R_src = self.R[idx_i, idx_j]
+        Z_src = self.Z[idx_i, idx_j]
+        J_src = self._Jtor[idx_i, idx_j]
+
         psi = greens_volume_psi(
-            R2d.ravel(), Z2d.ravel(),
-            self.R[idx_i, idx_j], self.Z[idx_i, idx_j],
-            self._Jtor[idx_i, idx_j],
+            R_grid.ravel(), Z_grid.ravel(),
+            R_src, Z_src, J_src,
             self.dR, self.dZ)
 
-        return R2d, Z2d, psi.reshape(R2d.shape)
+        return psi.reshape(R_grid.shape)
 
     # ── diagnostics ───────────────────────────────────────────────────────
 
