@@ -611,43 +611,75 @@ class FixedBoundaryEquilibrium:
         else:
             self.psi_axis = float(self.plasma_psi.max())
 
-    # ── external-domain psi via Green's function volume integral ───────────
+    # ── external-domain ψ via Laplace solve ──────────────────────────────
 
-    def psi_on_grid(self, R_grid, Z_grid):
+    def psi_on_grid(self, Rmin, Rmax, Zmin, Zmax, nx, ny, order=2, method='lu'):
         """
-        Compute ψ on an arbitrary grid via Green's function volume integral.
+        Compute ψ on a larger grid via FDM, with D-shape interior fixed as
+        the converged fixed-boundary solution.
 
-        ψ(R,Z) = ∫∫ G(R,Z; R',Z') · J_φ(R',Z') dR' dZ'
+        Two-zone approach:
+          • Inside D-shape: Dirichlet BC = converged FDM ψ (interpolated).
+            This ensures continuity and preserves ψ ≈ ψ_bndry on the LCFS.
+          • Outside D-shape: solve Laplace Δ*ψ = 0 with FDM.
+          • Outer (large grid) boundary: Dirichlet BC = ψ_bndry (constant).
 
-        This gives the free-space poloidal flux from the converged plasma
-        current.  It satisfies Δ*ψ = -μ₀ R J_φ inside the plasma and
-        Laplace (Δ*ψ = 0) in the vacuum exterior, with natural BC (ψ → 0
-        at infinity).
-
-        After self-consistent convergence of the fixed-boundary solve, the
-        value of ψ on the D-shape contour will be ≈ ψ_bndry (the LCFS
-        flux-surface value).  This method is recommended for computing
-        ψ and B_pol in the external vacuum region.
+        This gives the unique ψ satisfying:
+            Δ*ψ = 0          outside D-shape
+            ψ = ψ_FDM        inside  D-shape
+            ψ = ψ_bndry      on D-shape contour and far boundary
 
         Parameters
         ----------
-        R_grid, Z_grid : 2-D arrays — observation grid (e.g. from np.meshgrid)
+        Rmin, Rmax, Zmin, Zmax : domain bounds [m] (larger than FDM grid)
+        nx, ny : grid size for the large domain
+        order  : FDM order (2 or 4)
+        method : 'lu' or 'auto'
 
         Returns
         -------
-        psi : 2-D array, same shape as R_grid — poloidal flux [Wb/rad]
+        R2d, Z2d, psi : 2-D arrays — the coordinate mesh and ψ field
         """
-        idx_i, idx_j = np.where(self.plasma_mask)
-        R_src = self.R[idx_i, idx_j]
-        Z_src = self.Z[idx_i, idx_j]
-        J_src = self._Jtor[idx_i, idx_j]
+        R1d = np.linspace(Rmin, Rmax, nx)
+        Z1d = np.linspace(Zmin, Zmax, ny)
+        R2d, Z2d = np.meshgrid(R1d, Z1d, indexing='ij')
 
-        psi = greens_volume_psi(
-            R_grid.ravel(), Z_grid.ravel(),
-            R_src, Z_src, J_src,
-            self.dR, self.dZ)
+        # ── Interpolate FDM solution onto the large grid ──────────────────
+        f_fdm = RectBivariateSpline(
+            self.R[:, 0], self.Z[0, :], self.plasma_psi)
+        psi_large = f_fdm(R1d, Z1d)
 
-        return psi.reshape(R_grid.shape)
+        # ── Build interior mask: True = solve Laplace, False = Dirichlet ──
+        # Points outside D-shape AND not on the large-grid boundary
+        # use the Laplace stencil.  Everything else is Dirichlet.
+        mask_dshape = mask_inside_lcfs(R2d, Z2d, self.R_lcfs, self.Z_lcfs)
+
+        interior_mask = ~mask_dshape  # exterior of D-shape
+        interior_mask[0, :]  = False   # outer boundary: Dirichlet
+        interior_mask[-1, :] = False
+        interior_mask[:, 0]  = False
+        interior_mask[:, -1] = False
+
+        # ── Build masked solver and solve ─────────────────────────────────
+        solver = make_masked_solver(
+            Rmin, Rmax, Zmin, Zmax, nx, ny, interior_mask,
+            order=order, method=method)
+
+        # rhs: interior → 0 (Laplace), Dirichlet → assigned ψ value
+        # For interior (exterior of D-shape): Laplace = 0
+        # For interior (points inside D-shape that happen to be in mask):
+        #   actually, those are False in interior_mask, so Dirichlet.
+        rhs = np.full_like(R2d, self.psi_bndry, dtype=float)
+        rhs[mask_dshape] = psi_large[mask_dshape]  # FDM solution inside D
+        # Laplace region: rhs = 0 (already set as ψ_bndry, corrected below)
+        rhs[interior_mask] = 0.0  # GS source term = 0 in vacuum
+        rhs[0, :]  = self.psi_bndry
+        rhs[-1, :] = self.psi_bndry
+        rhs[:, 0]  = self.psi_bndry
+        rhs[:, -1] = self.psi_bndry
+
+        psi = to_numpy(solver(to_backend(rhs)))
+        return R2d, Z2d, psi
 
     # ── diagnostics ───────────────────────────────────────────────────────
 
