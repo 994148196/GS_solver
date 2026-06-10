@@ -10,8 +10,17 @@ Current profile: Jeon (2015) Eq.(5)
 with λ, β₀ constrained by total current I_p and poloidal beta β_p
 (Jeon Eqs. 13a, 13b).
 
-Boundary ψ on the rectangular domain is computed from the plasma
-current via Green's function (fixed_boundary_solve).
+The boundary value ψ_bndry on the D-shaped LCFS is computed self-
+consistently from the Green's function volume integral of the plasma
+current.  Each Picard iteration:
+  1. Computes J_φ from the current ψ distribution
+  2. Computes ψ_green = ∫G·J_φ dS on the D-shape contour → ψ_bndry
+  3. Solves GS inside D-shape with ψ = ψ_bndry Dirichlet BC
+
+After convergence, the Green integral of the converged Jtor gives
+ψ ≈ ψ_bndry on the D-shape (self-consistent LCFS flux surface).
+Use eq.psi_on_grid() to extend ψ to any external grid via the
+Green volume integral.
 """
 
 import sys, os, warnings
@@ -83,7 +92,15 @@ print("=" * 64)
 print(f"\n  Plasma current Ip  = {eq.plasmaCurrent():.6e} A  (target {Ip_target:.0e} A)")
 print(f"  Poloidal beta βp   = {eq.poloidalBeta():.4f}  (target {betap_target})")
 print(f"  psi axis           = {eq.psi_axis:.6f} Wb/rad")
-print(f"  psi boundary       = {eq.psi_bndry:.6f} Wb/rad")
+print(f"  psi boundary       = {eq.psi_bndry:.6f} Wb/rad  (Green integral)")
+print(f"  ψ₀ = ψ_bndry − ψ_axis = {eq.psi_bndry - eq.psi_axis:.4f} Wb/rad")
+# Self-consistency check
+idx_i, idx_j = np.where(eq.plasma_mask)
+from gspack.boundary import _green_matrix_np
+_Gds = _green_matrix_np(eq.R_lcfs, eq.Z_lcfs, eq.R[idx_i, idx_j], eq.Z[idx_i, idx_j])
+psi_ds = _Gds @ (eq._Jtor[idx_i, idx_j] * eq.dR * eq.dZ)
+print(f"  Self-consistency:  ⟨ψ_green⟩_LCFS = {psi_ds.mean():.4f}")
+print(f"                     max|ψ_green − ψ_bndry| = {np.abs(psi_ds - eq.psi_bndry).max():.2e}")
 mag = eq.magneticAxis()
 print(f"\n  Magnetic axis: R = {mag[0]:.4f} m,  Z = {mag[1]:.2e} m")
 geo = eq.geometricAxis()

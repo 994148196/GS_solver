@@ -530,40 +530,70 @@ class FixedBoundaryEquilibrium:
         """
         Single Picard iteration with fixed-boundary solve.
 
-        The D-shaped LCFS is enforced as a Dirichlet boundary condition:
-        ψ = ψ_bndry (= 0 by convention) on the D-shape contour.
-        Points outside the D-shape are also set to ψ_bndry.
+        For each iteration:
+          1. Compute J_φ from profiles using current ψ
+          2. Compute ψ_green = ∫∫ G·J_φ dS on the D-shape boundary (free-space)
+          3. Set ψ_bndry = mean(ψ_green on D-shape) — the LCFS value
+          4. Solve GS inside D-shape with ψ = ψ_bndry Dirichlet BC
+
+        After convergence, the Green integral from the converged Jtor gives
+        ψ ≈ ψ_bndry on the D-shape contour — this is the self-consistent
+        fixed-boundary solution.  ψ on the D-shape is a flux surface.
 
         Parameters
         ----------
         profiles : profile object with Jtor() method (e.g. ConstrainBetapIp)
         psi      : current total ψ (if None, uses self.psi())
-        psi_bndry: override boundary value (optional, default 0.0)
+        psi_bndry: override (optional); if None, computed from Green integral
         """
         self._profiles = profiles
         if psi is None:
             psi = self.psi()
         psi = to_numpy(psi)
 
-        # Update psi_axis from current psi (but keep psi_bndry = D-shape value)
-        self._update_boundary_psi(psi)
-        self.psi_bndry = float(psi_bndry) if psi_bndry is not None else 0.0
+        # ── Update psi_axis from current ψ (preserve psi_bndry) ───────────
+        opt, xpt = find_critical(self.R, self.Z, psi)
+        if opt:
+            self._opoints = opt
+            self._xpoints = xpt
+            self.psi_axis = float(opt[0][2])
+        else:
+            self.psi_axis = float(psi.max())
+        # Keep existing psi_bndry (from previous Green integral or initial)
+        if psi_bndry is not None:
+            self.psi_bndry = float(psi_bndry)
 
         psi_ax = self.psi_axis
         psi_bn = self.psi_bndry
-
-        # Core mask from LCFS geometry
         mask = self.plasma_mask.astype(float)
 
-        # Jtor from profile (masked by LCFS)
+        # ── 1. Compute Jtor from profiles (using current ψ_bndry) ─────────
         Jtor = profiles.Jtor(self.R, self.Z, psi,
                              psi_ax, psi_bn, mask=mask)
         self._Jtor = np.asarray(Jtor, dtype=float)
 
-        # Build RHS for D-shape-constrained solver:
-        #   interior → GS source term: -μ₀RJtor
-        #   boundary → ψ_bndry (Dirichlet)
-        rhs = np.full_like(self.R, self.psi_bndry, dtype=float)
+        # ── 2. Compute new ψ_bndry from Green volume integral ─────────────
+        if psi_bndry is None:
+            idx_i, idx_j = np.where(self.plasma_mask)
+
+            # Cache Green matrix (D-shape × source points, unchanged)
+            if not hasattr(self, '_G_dshape') or self._G_dshape.shape[1] != len(idx_i):
+                from .boundary import _green_matrix_np
+                self._G_dshape = _green_matrix_np(
+                    np.asarray(self.R_lcfs).ravel(),
+                    np.asarray(self.Z_lcfs).ravel(),
+                    self.R[idx_i, idx_j], self.Z[idx_i, idx_j])
+
+            psi_green_bc = (
+                self._G_dshape @ (self._Jtor[idx_i, idx_j] * self.dR * self.dZ))
+
+            self.psi_bndry = float(psi_green_bc.mean())
+
+        psi_bn = self.psi_bndry
+
+        # ── 3. Solve GS inside D-shape with ψ = ψ_bndry Dirichlet BC ──────
+        # rhs[interior] = -μ₀ R Jtor, rhs[boundary] = ψ_bndry
+        rhs = np.full_like(self.R, psi_bn, dtype=float)
         rhs[self._interior_mask] = (
             -MU0 * self.R[self._interior_mask] * self._Jtor[self._interior_mask])
 
@@ -572,7 +602,7 @@ class FixedBoundaryEquilibrium:
         )
         self.plasma_psi = new_plasma_psi.astype(np.float64)
 
-        # Update psi_axis only (psi_bndry stays fixed at D-shape value)
+        # ── 4. Update psi_axis ────────────────────────────────────────────
         opt, xpt = find_critical(self.R, self.Z, self.plasma_psi)
         if opt:
             self._opoints = opt
@@ -590,15 +620,14 @@ class FixedBoundaryEquilibrium:
         ψ(R,Z) = ∫∫ G(R,Z; R',Z') · J_φ(R',Z') dR' dZ'
 
         This gives the free-space poloidal flux from the converged plasma
-        current distribution.  It satisfies Δ*ψ = -μ₀ R J_φ inside the
-        plasma and Laplace (Δ*ψ = 0) in the vacuum exterior, with natural
-        boundary conditions (ψ → 0 at infinity).
+        current.  It satisfies Δ*ψ = -μ₀ R J_φ inside the plasma and
+        Laplace (Δ*ψ = 0) in the vacuum exterior, with natural BC (ψ → 0
+        at infinity).
 
-        In contrast to the internal FDM solution (which enforces ψ=0 on the
-        D-shape contour via Dirichlet BC on the rectangular domain), the
-        Green integral is the physically correct field in the external
-        region and is recommended for computing poloidal fields outside
-        the LCFS.
+        After self-consistent convergence of the fixed-boundary solve, the
+        value of ψ on the D-shape contour will be ≈ ψ_bndry (the LCFS
+        flux-surface value).  This method is recommended for computing
+        ψ and B_pol in the external vacuum region.
 
         Parameters
         ----------

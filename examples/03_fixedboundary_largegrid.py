@@ -1,18 +1,18 @@
 """
 gspack v2.0 — 03-fixedboundary-largegrid
 ==========================================
-Fixed-boundary GS solve with ψ outside the plasma computed via
+Fixed-boundary GS solve with external-region ψ computed via
 Green's function volume integral.
 
-Two ψ fields are available:
-  1. FDM solver (eq.psi()):  ψ=0 enforced on the D-shape contour
-     (Dirichlet BC on the rectangular domain).  Used for internal
-     plasma diagnostics (q, βp, etc.).
-  2. Green volume integral (eq.psi_on_grid()): free-space ψ from
-     the plasma current.  Satisfies Laplace in the vacuum exterior
-     with natural BC (ψ→0 at infinity).  Physically correct in the
-     external region; ψ on the D-shape is approximately (not exactly)
-     zero due to the different BC treatment.
+The fixed-boundary solve converges with a self-consistent ψ_bndry
+determined from the Green integral.  After convergence:
+
+  • eq.psi()            — FDM solution: ψ=ψ_bndry on D-shape (∼const)
+  • eq.psi_on_grid()    — Green volume integral: free-space ψ from Jtor
+                          (Laplace in vacuum, ψ→0 at infinity)
+
+psi_on_grid() can be evaluated on any grid and is the physically
+correct ψ for computing poloidal fields in the vessel region.
 """
 
 import sys, os, warnings
