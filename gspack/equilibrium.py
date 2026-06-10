@@ -611,27 +611,33 @@ class FixedBoundaryEquilibrium:
         else:
             self.psi_axis = float(self.plasma_psi.max())
 
-    # ── external-domain ψ via Green integral + FDM interior ───────────────
+    # ── external-domain ψ via Green integral ──────────────────────────────
 
     def psi_on_grid(self, Rmin, Rmax, Zmin, Zmax, nx, ny, order=2, method='lu'):
         """
-        Compute ψ on a larger vessel-scale grid.
+        Compute ψ on a larger vessel-scale grid via Green's function
+        volume integral.
 
-        Two-zone composite:
-          • D-shape interior: FDM converged solution (ψ=ψ_bndry on LCFS)
-          • D-shape exterior: Green's function volume integral
-            ψ(R,Z) = ∫∫ G(R,Z; R',Z')·J_φ(R',Z') dR' dZ'
+        ψ(R,Z) = ∫∫ G(R,Z; R',Z') · J_φ(R',Z') dR' dZ'
 
-        The Green integral gives the exact free-space ψ satisfying
-        Δ*ψ = -μ₀ R Jφ in the plasma and Δ*ψ = 0 (Laplace) in vacuum,
-        naturally decaying to zero at infinity.  Guaranteed Z-symmetric
-        because the Green kernel is Z-symmetric.
+        This is the exact free-space poloidal flux from the converged
+        plasma current distribution.  It satisfies:
+          • Δ*ψ = -μ₀ R Jφ   inside the plasma
+          • Δ*ψ = 0           in vacuum
+          • ψ → 0             at infinity
+
+        The Green integral gives a single, continuous ψ field everywhere.
+        Mixed with FDM interior interpolation → avoid discontinuity at
+        the D-shape boundary.  On the D-shape, ψ varies (not constant)
+        because the Green kernel does not enforce a Dirichlet BC — the
+        constant-ψ LCFS is only exactly enforced in the FDM solve used
+        for internal diagnostics.
 
         Parameters
         ----------
         Rmin, Rmax, Zmin, Zmax : domain bounds [m]
         nx, ny : grid size for the large domain
-        order, method : unused (for API compatibility)
+        order, method : unused (API compatibility)
 
         Returns
         -------
@@ -641,25 +647,14 @@ class FixedBoundaryEquilibrium:
         Z1d = np.linspace(Zmin, Zmax, ny)
         R2d, Z2d = np.meshgrid(R1d, Z1d, indexing='ij')
 
-        mask_dshape = mask_inside_lcfs(R2d, Z2d, self.R_lcfs, self.Z_lcfs)
-
-        # ── D-shape interior: interpolated FDM solution ───────────────────
-        psi = np.zeros_like(R2d, dtype=float)
-        f_fdm = RectBivariateSpline(
-            self.R[:, 0], self.Z[0, :], self.plasma_psi)
-        psi[mask_dshape] = f_fdm(R1d, Z1d)[mask_dshape]
-
-        # ── D-shape exterior: Green volume integral ───────────────────────
-        ext_mask = ~mask_dshape
-        R_obs = R2d[ext_mask]; Z_obs = Z2d[ext_mask]
         idx_i, idx_j = np.where(self.plasma_mask)
-        psi[ext_mask] = greens_volume_psi(
-            R_obs, Z_obs,
+        psi = greens_volume_psi(
+            R2d.ravel(), Z2d.ravel(),
             self.R[idx_i, idx_j], self.Z[idx_i, idx_j],
             self._Jtor[idx_i, idx_j],
             self.dR, self.dZ)
 
-        return R2d, Z2d, psi
+        return R2d, Z2d, psi.reshape(R2d.shape)
 
     # ── diagnostics ───────────────────────────────────────────────────────
 

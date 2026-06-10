@@ -2,15 +2,17 @@
 gspack v2.0 — 03-fixedboundary-largegrid
 ==========================================
 Fixed-boundary GS solve with external-region ψ computed via
-Green's function volume integral + FDM interior.
+Green's function volume integral on the entire large grid.
 
-Two-zone composite (psi_on_grid):
-  • D-shape interior: FDM converged solution (Dirichlet BC on LCFS,
-    ψ=ψ_bndry as a flux surface)
-  • D-shape exterior: Green's function volume integral from Jtor
-    (exact free-space ψ, Laplace in vacuum, ψ→0 at infinity)
+  ψ(R,Z) = ∫∫ G(R,Z; R',Z') · J_φ(R',Z') dR' dZ'
 
-The Green integral is guaranteed Z-symmetric → no LU solver asymmetry.
+This gives a single, continuous ψ field everywhere (no FDM/Green
+mixing → no discontinuity at D-shape).  Satisfies:
+  Δ*ψ = -μ₀ R Jφ inside plasma, Δ*ψ = 0 in vacuum, ψ → 0 at ∞.
+
+On the D-shape contour, ψ varies (not exactly constant) because
+the Green integral does not enforce a Dirichlet BC.  The constant-ψ
+LCFS is enforced in the FDM solve (eq.psi()) for internal diagnostics.
 """
 
 import sys, os, warnings
@@ -77,9 +79,9 @@ print(f"  βp  = {eq.poloidalBeta():.3f}  (target {betap_target})")
 print(f"  ψ_a = {eq.psi_axis:.4f}, ψ_bndry = {eq.psi_bndry:.4f} Wb/rad")
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  Step 2:  Extend ψ to a large grid via Green integral + FDM interior
+#  Step 2:  Green integral ψ on large grid
 # ═══════════════════════════════════════════════════════════════════════════
-print(f"\n  ── Step 2: Green integral on large grid (exterior of D-shape) ──")
+print(f"\n  ── Step 2: Green integral on large grid ──")
 print(f"  Grid: {NX_v}×{NY_v}  [{R_vmin},{R_vmax}]×[{Z_vmin},{Z_vmax}]")
 
 R_v, Z_v, psi_v = eq.psi_on_grid(
@@ -90,11 +92,10 @@ R_v, Z_v, psi_v = eq.psi_on_grid(
 from scipy.interpolate import RectBivariateSpline
 f_v = RectBivariateSpline(R_v[:,0], Z_v[0,:], psi_v)
 psi_on_ds = np.array([float(f_v(r, z)) for r, z in zip(eq.R_lcfs, eq.Z_lcfs)])
-print(f"  ψ on D-shape (interior): mean={psi_on_ds.mean():.4e}, "
+print(f"  ψ on D-shape (Green): mean={psi_on_ds.mean():.4e}, "
       f"range=[{psi_on_ds.min():.4e}, {psi_on_ds.max():.4e}]")
 print(f"  ψ_bndry (FDM) = {eq.psi_bndry:.4f}")
-print(f"  Δψ_edge = |ψ_interior − ψ_exterior| = "
-      f"{np.abs(psi_on_ds.mean() - eq.psi_bndry):.2e}")
+print(f"  Δψ_spread = {psi_on_ds.max() - psi_on_ds.min():.2e} (Green integral spread on LCFS)")
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Step 3:  Visualise
