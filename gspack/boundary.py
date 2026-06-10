@@ -160,6 +160,45 @@ def free_boundary_hagenow(R, Z, Jtor, solver):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  Green's function: volume integral utilities
+# ═══════════════════════════════════════════════════════════════════════════
+
+def greens_volume_psi(R_obs, Z_obs, R_src, Z_src, Jtor_src, dR, dZ):
+    """
+    Compute ψ at observation points via Green's function volume integral.
+
+    ψ(R,Z) = ∫∫ G(R,Z; R',Z') · J_φ(R',Z') dR' dZ'
+
+    where G is the poloidal flux at (R,Z) from a unit toroidal current
+    filament at (R',Z').  The GS equation is Δ*ψ = -μ₀ R J_φ, and G
+    satisfies Δ*G = -μ₀ R δ(R-R')δ(Z-Z'), so the convolution gives
+    the free-space solution.
+
+    Suitable for computing ψ anywhere from a known current distribution,
+    including the external vacuum region (Laplace equation).
+
+    Parameters
+    ----------
+    R_obs, Z_obs : 1-D arrays — observation points
+    R_src, Z_src : 1-D arrays — source (plasma) points
+    Jtor_src     : 1-D array  — J_φ at source points [A/m²]
+    dR, dZ       : float — grid spacing [m]
+
+    Returns
+    -------
+    psi_obs : 1-D array, len(R_obs) — poloidal flux at observation points
+    """
+    R_obs = np.asarray(R_obs, dtype=float).ravel()
+    Z_obs = np.asarray(Z_obs, dtype=float).ravel()
+    R_src = np.asarray(R_src, dtype=float).ravel()
+    Z_src = np.asarray(Z_src, dtype=float).ravel()
+    Jtor  = np.asarray(Jtor_src, dtype=float).ravel()
+
+    G = _green_matrix_np(R_obs, Z_obs, R_src, Z_src)
+    return G @ (Jtor * dR * dZ)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  Fixed-boundary utilities and solver
 # ═══════════════════════════════════════════════════════════════════════════
 

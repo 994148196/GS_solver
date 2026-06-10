@@ -17,7 +17,8 @@ from scipy.ndimage import binary_erosion
 from .backend  import MU0, to_numpy, to_backend
 from .greens   import make_solver, make_masked_solver
 from .boundary import (free_boundary_hagenow, fixed_boundary_solve,
-                       dshape_lcfs, mask_inside_lcfs, initial_psi_lcfs)
+                       dshape_lcfs, mask_inside_lcfs, initial_psi_lcfs,
+                       greens_volume_psi)
 from .critical import find_critical, core_mask
 
 
@@ -579,6 +580,45 @@ class FixedBoundaryEquilibrium:
             self.psi_axis = float(opt[0][2])
         else:
             self.psi_axis = float(self.plasma_psi.max())
+
+    # ── external-domain psi via Green's function volume integral ───────────
+
+    def psi_on_grid(self, R_grid, Z_grid):
+        """
+        Compute ψ on an arbitrary grid via Green's function volume integral.
+
+        ψ(R,Z) = ∫∫ G(R,Z; R',Z') · J_φ(R',Z') dR' dZ'
+
+        This gives the free-space poloidal flux from the converged plasma
+        current distribution.  It satisfies Δ*ψ = -μ₀ R J_φ inside the
+        plasma and Laplace (Δ*ψ = 0) in the vacuum exterior, with natural
+        boundary conditions (ψ → 0 at infinity).
+
+        In contrast to the internal FDM solution (which enforces ψ=0 on the
+        D-shape contour via Dirichlet BC on the rectangular domain), the
+        Green integral is the physically correct field in the external
+        region and is recommended for computing poloidal fields outside
+        the LCFS.
+
+        Parameters
+        ----------
+        R_grid, Z_grid : 2-D arrays — observation grid (e.g. from np.meshgrid)
+
+        Returns
+        -------
+        psi : 2-D array, same shape as R_grid — poloidal flux [Wb/rad]
+        """
+        idx_i, idx_j = np.where(self.plasma_mask)
+        R_src = self.R[idx_i, idx_j]
+        Z_src = self.Z[idx_i, idx_j]
+        J_src = self._Jtor[idx_i, idx_j]
+
+        psi = greens_volume_psi(
+            R_grid.ravel(), Z_grid.ravel(),
+            R_src, Z_src, J_src,
+            self.dR, self.dZ)
+
+        return psi.reshape(R_grid.shape)
 
     # ── diagnostics ───────────────────────────────────────────────────────
 

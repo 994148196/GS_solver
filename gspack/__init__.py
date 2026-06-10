@@ -10,7 +10,8 @@ from .equilibrium import Equilibrium, FixedBoundaryEquilibrium
 from .separatrix  import find_separatrix
 from .safety      import find_safety
 from .boundary    import (free_boundary_hagenow, fixed_boundary_solve,
-                          dshape_lcfs, mask_inside_lcfs, initial_psi_lcfs)
+                          dshape_lcfs, mask_inside_lcfs, initial_psi_lcfs,
+                          greens_volume_psi)
 from . import picard, geqdsk, io, optimize, diagnostics
 
 __version__ = "2.0.0"
