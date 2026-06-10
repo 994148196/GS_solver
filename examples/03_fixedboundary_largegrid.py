@@ -2,15 +2,18 @@
 gspack v2.0 — 03-fixedboundary-largegrid
 ==========================================
 Fixed-boundary GS solve with external-region ψ computed via
-Laplace solve.
+two-step approach:
 
-Two-zone approach for psi_on_grid():
-  • Inside D-shape: Dirichlet BC = converged FDM ψ (interpolated)
-  • Outside D-shape: solve Laplace Δ*ψ = 0 with FDM
-  • Outer boundary: Dirichlet BC = ψ_bndry (constant)
+  Step 1 — Green's function volume integral on the outer boundary
+           of the large rectangular grid → physically correct BC.
 
-This guarantees ψ is continuous across the D-shape, and the
-D-shape contour is a flux surface with ψ ≈ ψ_bndry.
+  Step 2 — FDM Laplace solve on the large grid:
+           • D-shape interior: Dirichlet = converged FDM ψ
+           • D-shape exterior: Δ*ψ = 0 (Laplace in vacuum)
+           • Outer boundary: Dirichlet = ψ from Green integral (Step 1)
+
+Result: D-shape is a flux surface (ψ=ψ_bndry), exterior satisfies
+Laplace, and boundary values reflect the actual current distribution.
 """
 
 import sys, os, warnings

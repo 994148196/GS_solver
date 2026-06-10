@@ -615,19 +615,23 @@ class FixedBoundaryEquilibrium:
 
     def psi_on_grid(self, Rmin, Rmax, Zmin, Zmax, nx, ny, order=2, method='lu'):
         """
-        Compute ψ on a larger grid via FDM, with D-shape interior fixed as
-        the converged fixed-boundary solution.
+        Compute ψ on a larger vessel-scale grid via two-step approach.
 
-        Two-zone approach:
-          • Inside D-shape: Dirichlet BC = converged FDM ψ (interpolated).
-            This ensures continuity and preserves ψ ≈ ψ_bndry on the LCFS.
-          • Outside D-shape: solve Laplace Δ*ψ = 0 with FDM.
-          • Outer (large grid) boundary: Dirichlet BC = ψ_bndry (constant).
+        Step 1 — Green's function volume integral on the outer boundary:
+            ψ_bc = ∫∫ G(R,Z; R',Z') · J_φ(R',Z') dR' dZ'
+            evaluated on the four edges of the large rectangular domain.
+            This gives physically correct boundary values from the actual
+            plasma current distribution.
 
-        This gives the unique ψ satisfying:
-            Δ*ψ = 0          outside D-shape
-            ψ = ψ_FDM        inside  D-shape
-            ψ = ψ_bndry      on D-shape contour and far boundary
+        Step 2 — FDM Laplace solve on the large grid:
+            • Inside D-shape: Dirichlet BC = converged FDM ψ (interpolated)
+            • Outside D-shape: solve Δ*ψ = 0 (Laplace)
+            • Outer boundary: Dirichlet BC = ψ from Green integral (Step 1)
+
+        This ensures:
+            — D-shape is a flux surface (ψ = ψ_bndry from FDM Dirichlet)
+            — Exterior satisfies Laplace (Δ*ψ = 0 in vacuum)
+            — Far-field boundary values are physically correct
 
         Parameters
         ----------
@@ -649,34 +653,56 @@ class FixedBoundaryEquilibrium:
             self.R[:, 0], self.Z[0, :], self.plasma_psi)
         psi_large = f_fdm(R1d, Z1d)
 
-        # ── Build interior mask: True = solve Laplace, False = Dirichlet ──
-        # Points outside D-shape AND not on the large-grid boundary
-        # use the Laplace stencil.  Everything else is Dirichlet.
-        mask_dshape = mask_inside_lcfs(R2d, Z2d, self.R_lcfs, self.Z_lcfs)
+        # ── Step 1: Green function volume integral for outer BC ───────────
+        # Compute ψ on the four edges of the large rectangle
+        R_edge_bot = np.linspace(Rmin, Rmax, nx)
+        Z_edge_bot = np.full(nx, Zmin)
+        R_edge_top = np.linspace(Rmin, Rmax, nx)
+        Z_edge_top = np.full(nx, Zmax)
+        R_edge_left  = np.full(ny - 2, Rmin)
+        Z_edge_left  = np.linspace(Zmin, Zmax, ny)[1:-1]
+        R_edge_right = np.full(ny - 2, Rmax)
+        Z_edge_right = np.linspace(Zmin, Zmax, ny)[1:-1]
 
-        interior_mask = ~mask_dshape  # exterior of D-shape
-        interior_mask[0, :]  = False   # outer boundary: Dirichlet
+        R_obs = np.concatenate([R_edge_bot, R_edge_top,
+                                R_edge_left, R_edge_right])
+        Z_obs = np.concatenate([Z_edge_bot, Z_edge_top,
+                                Z_edge_left, Z_edge_right])
+
+        from .boundary import greens_volume_psi as _gvpsi
+        idx_i, idx_j = np.where(self.plasma_mask)
+        psi_edge = _gvpsi(
+            R_obs, Z_obs,
+            self.R[idx_i, idx_j], self.Z[idx_i, idx_j],
+            self._Jtor[idx_i, idx_j],
+            self.dR, self.dZ)
+
+        # ── Build mask: True = solve interior (Laplace), False = Dirichlet ──
+        mask_dshape = mask_inside_lcfs(R2d, Z2d, self.R_lcfs, self.Z_lcfs)
+        interior_mask = (~mask_dshape)  # exterior of D-shape = Laplace region
+        interior_mask[0, :]  = False   # boundary: Dirichlet
         interior_mask[-1, :] = False
         interior_mask[:, 0]  = False
         interior_mask[:, -1] = False
+
+        # ── Build RHS ────────────────────────────────────────────────────
+        rhs = np.zeros_like(R2d, dtype=float)
+
+        # Outer boundary → Green integral values
+        rhs[0, :]   = psi_edge[:nx]                              # bottom
+        rhs[-1, :]  = psi_edge[nx:2*nx]                          # top
+        rhs[1:-1, 0]  = psi_edge[2*nx:2*nx + (ny - 2)]           # left
+        rhs[1:-1, -1] = psi_edge[2*nx + (ny - 2):]               # right
+
+        # D-shape interior → FDM converged solution (Dirichlet)
+        rhs[mask_dshape] = psi_large[mask_dshape]
+
+        # Laplace region: rhs = 0 (already), source term = 0
 
         # ── Build masked solver and solve ─────────────────────────────────
         solver = make_masked_solver(
             Rmin, Rmax, Zmin, Zmax, nx, ny, interior_mask,
             order=order, method=method)
-
-        # rhs: interior → 0 (Laplace), Dirichlet → assigned ψ value
-        # For interior (exterior of D-shape): Laplace = 0
-        # For interior (points inside D-shape that happen to be in mask):
-        #   actually, those are False in interior_mask, so Dirichlet.
-        rhs = np.full_like(R2d, self.psi_bndry, dtype=float)
-        rhs[mask_dshape] = psi_large[mask_dshape]  # FDM solution inside D
-        # Laplace region: rhs = 0 (already set as ψ_bndry, corrected below)
-        rhs[interior_mask] = 0.0  # GS source term = 0 in vacuum
-        rhs[0, :]  = self.psi_bndry
-        rhs[-1, :] = self.psi_bndry
-        rhs[:, 0]  = self.psi_bndry
-        rhs[:, -1] = self.psi_bndry
 
         psi = to_numpy(solver(to_backend(rhs)))
         return R2d, Z2d, psi
