@@ -6,9 +6,11 @@ __pycache__/
 *.png
 *.pdf
 !refs/*.pdf
+*.zip
 .ipynb_checkpoints/
 *.egg-info/
 dist/
 build/
+PINO/
 .vscode/
 .idea/

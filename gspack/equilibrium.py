@@ -368,17 +368,23 @@ class FixedBoundaryEquilibrium:
     order     : FDM order 2 (default) or 4
     method    : 'auto', 'lu', or 'amg'
     check_limited : detect limiter contact (default False)
+    fix_bndry_zero : if True, fix ψ=0 on the LCFS (D-shape contour) instead
+                     of computing it from the Green volume integral.
+                     Physical results (B, q, βp) are identical since only
+                     ∇ψ matters; this option saves the Green-integral step.
+                     Default False (original self-consistent Green BC).
     """
 
     def __init__(self, R0=1.0, a=0.5, kappa=1.6, delta=0.3,
                  Rmin=0.2, Rmax=1.8, Zmin=-0.8, Zmax=0.8,
                  nx=65, ny=65, order=2, method='auto',
-                 check_limited=False):
+                 check_limited=False, fix_bndry_zero=False):
 
         self.R0, self.a     = float(R0), float(a)
         self.kappa          = float(kappa)
         self.delta          = float(delta)
         self.check_limited  = check_limited
+        self._fix_bndry_zero = fix_bndry_zero
         self.is_limited     = False
 
         # Computational domain
@@ -537,15 +543,23 @@ class FixedBoundaryEquilibrium:
         """
         Single Picard iteration with fixed-boundary solve.
 
-        For each iteration:
+        Two modes controlled by the `fix_bndry_zero` constructor argument:
+
+        Mode 1 — self-consistent Green BC (default, fix_bndry_zero=False):
           1. Compute J_φ from profiles using current ψ
           2. Compute ψ_green = ∫∫ G·J_φ dS on the D-shape boundary (free-space)
           3. Set ψ_bndry = mean(ψ_green on D-shape) — the LCFS value
           4. Solve GS inside D-shape with ψ = ψ_bndry Dirichlet BC
+          After convergence, the Green integral gives ψ ≈ ψ_bndry on D-shape.
 
-        After convergence, the Green integral from the converged Jtor gives
-        ψ ≈ ψ_bndry on the D-shape contour — this is the self-consistent
-        fixed-boundary solution.  ψ on the D-shape is a flux surface.
+        Mode 2 — fixed ψ=0 on LCFS (fix_bndry_zero=True):
+          1. Compute J_φ from profiles using current ψ
+          2. Skip Green integral; ψ_bndry ≡ 0 (same physical results since
+             only ∇ψ matters, and ψN normalization uses ψ_bndry - ψ_axis)
+          3. Solve GS inside D-shape with ψ = 0 Dirichlet BC
+
+          This mode is slightly faster (no Green-matrix build / mat-vec)
+          and the stored ψ field has ψ=0 on the LCFS by construction.
 
         Parameters
         ----------
@@ -566,8 +580,10 @@ class FixedBoundaryEquilibrium:
             self.psi_axis = float(opt[0][2])
         else:
             self.psi_axis = float(psi.max())
-        # Keep existing psi_bndry (from previous Green integral or initial)
-        if psi_bndry is not None:
+        # Override psi_bndry: fix_bndry_zero forces ψ=0 on LCFS
+        if self._fix_bndry_zero:
+            self.psi_bndry = 0.0
+        elif psi_bndry is not None:
             self.psi_bndry = float(psi_bndry)
 
         psi_ax = self.psi_axis
@@ -580,7 +596,7 @@ class FixedBoundaryEquilibrium:
         self._Jtor = np.asarray(Jtor, dtype=float)
 
         # ── 2. Compute new ψ_bndry from Green volume integral ─────────────
-        if psi_bndry is None:
+        if not self._fix_bndry_zero and psi_bndry is None:
             idx_i, idx_j = np.where(self.plasma_mask)
 
             # Cache Green matrix (D-shape × source points, unchanged)
